@@ -1,0 +1,10 @@
+version: "3"
+services:
+  anaconda:
+    build: .
+    image: condatorch
+    tty: true
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./:/conda/

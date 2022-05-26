@@ -4,6 +4,7 @@ import random
 import json
 import os
 import re
+import datetime
 import sys
 import torch
 from tqdm import tqdm
@@ -12,6 +13,9 @@ import torch.autograd as autograd
 from nltk.corpus import stopwords
 from transformers import BertTokenizer
 import time
+from dataclasses import dataclass
+import pandas as pd
+
 
 def read_json(filename):
     with open(filename, 'r') as fp:
@@ -52,12 +56,7 @@ def get_test(test_file):
     txts = []
     max_len = 0
     for line in open(test_file):
-        words = []
-
-        for w in line.strip().split():
-            w = w.lower()
-            w = re.sub('[0-9]+', 'N', w)
-            words.append(w)
+        words = line.strip().split()
         if len(words) > max_len:
             max_len = len(words)
 
@@ -73,11 +72,14 @@ class data_utils():
         self.seq_length = args.seq_length
         self.batch_size = args.batch_size
         self.no_cuda = args.no_cuda
+        self.pretrained = args.pretrained_dir
 
         self.dict_path = os.path.join(args.model_dir,'dictionary.json')
+        self.vocab_path = os.path.join(args.pretrained_dir, 'vocab.txt')
         self.train_path = args.train_path
-        self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')    
+        self.tokenizer = BertTokenizer.from_pretrained(self.pretrained)
 
+        self.training_data = []
         self.eos_id = 0
         self.unk_id = 1
         self.mask_id = 2
@@ -85,7 +87,7 @@ class data_utils():
 
         if args.train or not os.path.exists(self.dict_path):
             self.process_training_data()
-        elif args.test:
+        elif args.test or args:
             self.new_vocab = read_json(self.dict_path)
 
         print('vocab_size:',len(self.new_vocab))
@@ -95,8 +97,48 @@ class data_utils():
         for w in self.new_vocab:
             self.index2word[self.new_vocab[w]] = w
 
-
     def process_training_data(self):
+        print(f'vocab exists: {self.vocab_path} = {os.path.exists(self.vocab_path)}')
+
+        if os.path.exists(self.vocab_path):
+            self.load_train_data()
+        else:
+            self.load_train_data_with_create_vocab()
+
+    def load_train_data(self):
+        self.new_vocab = dict()
+        self.new_vocab['[PAD]'] = 0
+        self.new_vocab['[UNK]'] = 1
+        self.new_vocab['[MASK]'] = 2
+        self.new_vocab['[CLS]'] = 3
+
+        # create dictionary.json
+        for line in open(self.vocab_path):
+            word = line.strip()
+            if re.match("\[\w+\]", word):
+                print(f'line={word} is skip')
+                continue
+
+            self.new_vocab[word] = len(self.new_vocab)
+
+        write_json(self.dict_path, self.new_vocab)
+
+        # load train_data
+        for i, line in enumerate(open(self.train_path)):
+            if i % 100000 == 0:
+                print(f'{datetime.datetime.now()}: {i} lines process end...')
+
+            word_list = []
+            words = ['[CLS]'] + line.split()
+            for w in words:
+                if w in self.new_vocab:
+                    word_list.append(self.new_vocab[w])
+                else:
+                    word_list.append(self.unk_id)
+
+            self.training_data.append(word_list)
+
+    def load_train_data_with_create_vocab(self):
         self.training_data = []
 
         self.new_vocab = dict()
@@ -107,7 +149,10 @@ class data_utils():
         
         dd = []
         word_count = {}
-        for line in open(self.train_path):
+        for i, line in enumerate(open(self.train_path)):
+            if i % 1000 == 0:
+                print(f'{datetime.now()}: {i} lines process end...')
+
             w_list = []
             for word in line.strip().split():
                 if 'N' in word:
@@ -115,6 +160,7 @@ class data_utils():
                 else:
                     sub_words = self.tokenizer.tokenize(word)
                     w = sub_words[0]
+
                 word_count[w] = word_count.get(w,0) + 1
                 w_list.append(w)
             w_list = ['[CLS]'] + w_list
@@ -131,6 +177,7 @@ class data_utils():
                     word_list.append(self.new_vocab[w])
                 else:
                     word_list.append(self.unk_id)
+            print(f'word_ist={word_list}')
             self.training_data.append(word_list)
 
         write_json(self.dict_path, self.new_vocab)
@@ -168,7 +215,7 @@ class data_utils():
                     masked_vec[i] = self.mask_id
 
 
-        if length > 70 or masked_num == 0:
+        if length > (seq_length - 1) or masked_num == 0:
             masked_vec = None
 
         return masked_vec,origin_vec,target_vec
@@ -208,7 +255,7 @@ class data_utils():
             start_time = time.time()
             print("\nstart epo %d!!!!!!!!!!!!!!!!\n" % (epo))
             for line in self.training_data:
-                input_vec,origin_vec,target_vec = self.make_masked_data(line, 60)
+                input_vec,origin_vec,target_vec = self.make_masked_data(line, self.seq_length)
 
                 if input_vec is not None:
                     length = np.sum(input_vec != self.eos_id)
@@ -242,3 +289,47 @@ class data_utils():
     def subsequent_mask(self, vec):
         attn_shape = (vec.shape[-1], vec.shape[-1])
         return (np.triu(np.ones((attn_shape)), k=1).astype('uint8') == 0).astype(np.float)
+
+
+@dataclass
+class TVMetaDataConverter(object):
+    """
+    SortIDから番組情報に変換するクラス
+
+    Attributes
+    ----------
+    meta_df: DataFrame
+        番組メタ情報
+    """
+
+    def __init__(self, meta_file: str) -> None:
+        """
+        Parameters
+        ----------
+        meta_file : str
+            番組メタ情報
+        """
+        # 番組メタ情報をロード
+        self.meta_df = pd.read_csv(meta_file)
+
+    def to_meta_info(self, sortid) -> str:
+        """
+        sortidを番組の放送時間、放送局、番組名、サブタイトルに変換して返す。
+        渡されたsortidがspecial token([CLS]、[SEP]、[MASK], [UNK])の場合はそのまま返す。
+
+        Parameters
+        ----------
+        sortid: str
+            番組のコマを表すid もしくは special token
+
+        Returns
+        -------
+            番組の放送時間、放送局、番組名、サブタイトルを結合した文字列
+        """
+
+        if sortid in ('[CLS]', '[SEP]', '[MASK]', '[UNK]'):
+            return sortid
+
+        target_df = self.meta_df.query(f'sortid == {sortid}')
+        data_list = list(target_df[['from', '放送局', '番組名', 'サブタイトル']].values[0])
+        return ' '.join((sortid, *map(str, data_list)))

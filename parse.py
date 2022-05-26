@@ -44,23 +44,29 @@ def word2tree(start, end, text):
 
 def dump_tree(break_probs, layer, start, end , text, threshold=0.8):
     layer_probs = break_probs[layer,start:end]
+    # print(f'layer_probs({layer},{start}:{end})={layer_probs}')
     min_layer = 2
     tree = Tree.fromstring('()')
     if end - start > 1:
         point = np.argmin(layer_probs)
+        # print(f'point={point}: {layer_probs[point]}')
         if layer_probs[point] > threshold:
             if layer == min_layer:
                 tree = word2tree(start, end+1, text)
                 return tree
+            # print('watch next layer.')
             return dump_tree(break_probs, max(layer-1,min_layer), start, end, text, threshold)
     
         for span in (layer_probs[:point],layer_probs[point+1:]):
+            # print(f'span={span}')
             span_size = span.shape[0]
             if span_size > 0:
                 if np.min(span) > 0.7:
                     node_tree = dump_tree(break_probs, max(layer-1,min_layer), start, start+span_size, text, threshold)
+                    # print(f'next layer tree: {node_tree}')
                 else:
                     node_tree = dump_tree(break_probs, layer, start, start+span_size, text, threshold)
+                    # print(f'same layer tree: {node_tree}')
                 tree.insert(len(tree)+1,node_tree)
             else:
                 tree.insert(len(tree)+1,word2tree(start, start+1, text))
