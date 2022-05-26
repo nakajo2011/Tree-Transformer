@@ -18,17 +18,19 @@ We use BERT tokenizer from [PyTorch-Transformers](https://github.com/huggingface
 ## Training
 For grammar induction training:  
 ```python3 main.py -train -model_dir [model_dir] -num_step 60000```  
-The default setting achieves F1 of approximatedly 49.5 on WSJ test set. The training file 'data/train.txt' includes all WSJ data except 'WSJ_22 and WSJ_23'.   
+
+このリポジトリには視聴行動データを600000step分学習させたモデルをtrain_model以下に格納済み。
 
 ## Evaluation
 For grammar induction testing:  
-```python3 main.py -test -model_dir [model_dir]```  
-The code creates a result directory named model_dir. The result directory includes 'bracket.json' and 'tree.txt'. File 'bracket.json' contains the brackets of trees outputted from the model and they can be used for evaluating F1. The ground truth brackets of testing data can be obtained by using code of [on-lstm](https://github.com/yikangshen/Ordered-Neurons). File 'tree.txt' contains the parse trees. The default testing file 'data/test.txt' contains the tests of wsj_23.   
+```python3 main.py -test -seq_length 512```  
+The code creates a result directory named model_dir. The result directory includes 'bracket.json' and 'tree.txt'. File 'bracket.json' contains the brackets of trees outputted from the model and they can be used for evaluating F1.
+The 'datas' dir include constituent attention weight datas.
 
 ## Generate Tree Graph
 Exec After evaluation:
 ```
-python3 main.py -graph -model_dir [model_dir]
+python3 main.py -graph
 ```
 
 ## Acknowledgements
@@ -38,4 +40,4 @@ python3 main.py -graph -model_dir [model_dir]
 ## Contact
 nakajo@chaintope.com
 
-original creator: king6101@gmail.com
+base creator: king6101@gmail.com
